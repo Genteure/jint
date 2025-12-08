@@ -45,7 +45,8 @@ internal sealed class JintFunctionDefinition
             {
                 // local copies to prevent capturing closure created on top of method
                 var function = functionObject;
-                var jsValues = argumentsList;
+                // Make a copy of arguments to ensure they remain valid when the deferred async body executes
+                JsValue[] jsValues = [.. argumentsList];
 
                 var promiseCapability = PromiseConstructor.NewPromiseCapability(context.Engine, context.Engine.Realm.Intrinsics.Promise);
                 AsyncFunctionStart(context, promiseCapability, context =>
@@ -75,7 +76,8 @@ internal sealed class JintFunctionDefinition
             {
                 // local copies to prevent capturing closure created on top of method
                 var function = functionObject;
-                var arguments = argumentsList;
+                // Make a copy of arguments to ensure they remain valid when the deferred async body executes
+                JsValue[] arguments = [.. argumentsList];
 
                 var promiseCapability = PromiseConstructor.NewPromiseCapability(context.Engine, context.Engine.Realm.Intrinsics.Promise);
                 _bodyStatementList ??= new JintStatementList(Function);
