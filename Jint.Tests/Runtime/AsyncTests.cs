@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Jint.Native;
+using Jint.Native.Function;
 using Jint.Runtime;
 using Jint.Tests.Runtime.TestClasses;
 
@@ -290,7 +291,7 @@ public class AsyncTests
     }
 #endif
 
-    [Fact(Skip = "TODO es6-await https://github.com/sebastienros/jint/issues/1385")]
+    [Fact(Skip = "TODO: await of immediately-resolved promises should yield to event loop. Currently runs synchronously via UnwrapIfPromise.")]
     public void ShouldHaveCorrectOrder()
     {
         var engine = new Engine();
@@ -439,5 +440,130 @@ public class AsyncTests
             _values.Add(value);
             return Task.CompletedTask;
         }
+    }
+
+    [Fact]
+    public void ShouldNotThrowReferenceErrorForVariableInAsyncFunctionPromiseChain()
+    {
+        // Issue #1385 - variable referenced in promise chain before definition should work
+        var engine = new Engine();
+        
+        var result = engine.Evaluate(@"
+            const promise1 = new Promise(resolve => {
+                resolve();
+            }).then(() => [promise2])
+
+            const promise2 = waitForPromise(promise1);
+            
+            promise2.catch(e => {
+                throw e;
+            });
+
+            async function waitForPromise(promise) {
+                await promise;
+            }
+            
+            promise2
+        ");
+        
+        // Should not throw "ReferenceError: promise2 has not been initialized"
+        result.UnwrapIfPromise();
+    }
+
+    [Fact]
+    public void ShouldPromiseBeResolvedInAsyncFunction()
+    {
+        // Simplified test from issue #1385 comment
+        var log = new List<string>();
+        
+        Engine engine = new();
+        engine.SetValue("log", (string str) =>
+        {
+            log.Add(str);
+        });
+        
+        var result = engine.Execute("""
+            async function main() {
+                return new Promise(function (resolve) {
+                  log('Promise!')
+                  resolve(null)
+                }).then(function () {
+                  log('Resolved!')
+                })
+            }
+        """);
+        
+        JsValue val = result.GetValue("main");
+
+        Assert.True(val is Function, "Expected 'main' to be a function");
+        var func = (Function)val;
+        func.Call().UnwrapIfPromise();
+        
+        Assert.Equal(2, log.Count);
+        Assert.Equal("Promise!", log[0]);
+        Assert.Equal("Resolved!", log[1]);
+    }
+
+    [Fact]
+    public void SimpleAsyncFunctionWithParameter()
+    {
+        var engine = new Engine();
+        var result = engine.Evaluate(@"
+            async function test(value) {
+                return value + 1;
+            }
+            test(42)
+        ");
+        result = result.UnwrapIfPromise();
+        Assert.Equal(43, result);
+    }
+
+    [Fact]
+    public void AsyncFunctionWithAwaitAndParameter()
+    {
+        var engine = new Engine();
+        var result = engine.Evaluate(@"
+            async function test(value) {
+                await Promise.resolve();
+                return value + 1;
+            }
+            test(42)
+        ");
+        result = result.UnwrapIfPromise();
+        Assert.Equal(43, result);
+    }
+
+    [Fact]
+    public void AsyncFunctionAwaitingPromiseParameter()
+    {
+        var engine = new Engine();
+        var result = engine.Evaluate(@"
+            const p = Promise.resolve(42);
+            async function test(promise) {
+                const value = await promise;
+                return value + 1;
+            }
+            test(p)
+        ");
+        result = result.UnwrapIfPromise();
+        Assert.Equal(43, result);
+    }
+
+    [Fact]
+    public void AsyncFunctionSimpleParameter()
+    {
+        var log = new List<string>();
+        var engine = new Engine();
+        engine.SetValue("log", (string s) => log.Add(s));
+        
+        engine.Evaluate(@"
+            async function test(x) {
+                log('x: ' + x);
+            }
+            test(42);
+        ");
+        
+        Assert.Single(log);
+        Assert.Equal("x: 42", log[0]);
     }
 }

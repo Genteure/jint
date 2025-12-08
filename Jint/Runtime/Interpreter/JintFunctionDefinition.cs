@@ -45,7 +45,8 @@ internal sealed class JintFunctionDefinition
             {
                 // local copies to prevent capturing closure created on top of method
                 var function = functionObject;
-                var jsValues = argumentsList;
+                // Make a copy of arguments to ensure they remain valid when the deferred async body executes
+                JsValue[] jsValues = [.. argumentsList];
 
                 var promiseCapability = PromiseConstructor.NewPromiseCapability(context.Engine, context.Engine.Realm.Intrinsics.Promise);
                 AsyncFunctionStart(context, promiseCapability, context =>
@@ -75,7 +76,8 @@ internal sealed class JintFunctionDefinition
             {
                 // local copies to prevent capturing closure created on top of method
                 var function = functionObject;
-                var arguments = argumentsList;
+                // Make a copy of arguments to ensure they remain valid when the deferred async body executes
+                JsValue[] arguments = [.. argumentsList];
 
                 var promiseCapability = PromiseConstructor.NewPromiseCapability(context.Engine, context.Engine.Realm.Intrinsics.Promise);
                 _bodyStatementList ??= new JintStatementList(Function);
@@ -121,29 +123,47 @@ internal sealed class JintFunctionDefinition
         var runningContext = context.Engine.ExecutionContext;
         // Set the code evaluation state of asyncContext such that when evaluation is resumed for that execution contxt the following steps will be performed:
 
-        Completion result;
-        try
-        {
-            result = asyncBody(context);
-        }
-        catch (JavaScriptException e)
-        {
-            promiseCapability.Reject.Call(JsValue.Undefined, e.Error);
-            return;
-        }
+        // Copy the execution context so it can be captured in the lambda
+        var capturedAsyncContext = asyncContext;
 
-        if (result.Type == CompletionType.Normal)
+        // Enqueue the async body execution to the event loop to ensure it runs asynchronously
+        context.Engine.AddToEventLoop(() =>
         {
-            promiseCapability.Resolve.Call(JsValue.Undefined, JsValue.Undefined);
-        }
-        else if (result.Type == CompletionType.Return)
-        {
-            promiseCapability.Resolve.Call(JsValue.Undefined, result.Value);
-        }
-        else
-        {
-            promiseCapability.Reject.Call(JsValue.Undefined, result.Value);
-        }
+            // Push asyncContext onto the execution context stack; asyncContext is now the running execution context.
+            context.Engine.EnterExecutionContext(capturedAsyncContext);
+
+            try
+            {
+                Completion result;
+                try
+                {
+                    result = asyncBody(context);
+                }
+                catch (JavaScriptException e)
+                {
+                    promiseCapability.Reject.Call(JsValue.Undefined, e.Error);
+                    return;
+                }
+
+                if (result.Type == CompletionType.Normal)
+                {
+                    promiseCapability.Resolve.Call(JsValue.Undefined, JsValue.Undefined);
+                }
+                else if (result.Type == CompletionType.Return)
+                {
+                    promiseCapability.Resolve.Call(JsValue.Undefined, result.Value);
+                }
+                else
+                {
+                    promiseCapability.Reject.Call(JsValue.Undefined, result.Value);
+                }
+            }
+            finally
+            {
+                // Pop asyncContext from the execution context stack
+                context.Engine.LeaveExecutionContext();
+            }
+        });
 
         /*
         4. Push asyncContext onto the execution context stack; asyncContext is now the running execution context.
