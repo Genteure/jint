@@ -495,10 +495,9 @@ public class AsyncTests
         
         JsValue val = result.GetValue("main");
 
-        if (val is Function func)
-        {
-            func.Call().UnwrapIfPromise();
-        }
+        Assert.True(val is Function, "Expected 'main' to be a function");
+        var func = (Function)val;
+        func.Call().UnwrapIfPromise();
         
         Assert.Equal(2, log.Count);
         Assert.Equal("Promise!", log[0]);
