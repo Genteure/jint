@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Jint.Native;
+using Jint.Native.Function;
 using Jint.Runtime;
 using Jint.Tests.Runtime.TestClasses;
 
@@ -290,7 +291,7 @@ public class AsyncTests
     }
 #endif
 
-    [Fact(Skip = "TODO es6-await https://github.com/sebastienros/jint/issues/1385")]
+    [Fact]
     public void ShouldHaveCorrectOrder()
     {
         var engine = new Engine();
@@ -439,5 +440,68 @@ public class AsyncTests
             _values.Add(value);
             return Task.CompletedTask;
         }
+    }
+
+    [Fact]
+    public void ShouldNotThrowReferenceErrorForVariableInAsyncFunctionPromiseChain()
+    {
+        // Issue #1385 - variable referenced in promise chain before definition should work
+        var engine = new Engine();
+        
+        var result = engine.Evaluate(@"
+            const promise1 = new Promise(resolve => {
+                resolve();
+            }).then(() => [promise2])
+
+            const promise2 = waitForPromise(promise1);
+            
+            promise2.catch(e => {
+                throw e;
+            });
+
+            async function waitForPromise(promise) {
+                await promise;
+            }
+            
+            promise2
+        ");
+        
+        // Should not throw "ReferenceError: promise2 has not been initialized"
+        result.UnwrapIfPromise();
+    }
+
+    [Fact]
+    public void ShouldPromiseBeResolvedInAsyncFunction()
+    {
+        // Simplified test from issue #1385 comment
+        var log = new List<string>();
+        
+        Engine engine = new();
+        engine.SetValue("log", (string str) =>
+        {
+            log.Add(str);
+        });
+        
+        var result = engine.Execute("""
+            async function main() {
+                return new Promise(function (resolve) {
+                  log('Promise!')
+                  resolve(null)
+                }).then(function () {
+                  log('Resolved!')
+                })
+            }
+        """);
+        
+        JsValue val = result.GetValue("main");
+
+        if (val is Function func)
+        {
+            func.Call().UnwrapIfPromise();
+        }
+        
+        Assert.Equal(2, log.Count);
+        Assert.Equal("Promise!", log[0]);
+        Assert.Equal("Resolved!", log[1]);
     }
 }

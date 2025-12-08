@@ -121,29 +121,47 @@ internal sealed class JintFunctionDefinition
         var runningContext = context.Engine.ExecutionContext;
         // Set the code evaluation state of asyncContext such that when evaluation is resumed for that execution contxt the following steps will be performed:
 
-        Completion result;
-        try
-        {
-            result = asyncBody(context);
-        }
-        catch (JavaScriptException e)
-        {
-            promiseCapability.Reject.Call(JsValue.Undefined, e.Error);
-            return;
-        }
+        // Copy the execution context so it can be captured in the lambda
+        var capturedAsyncContext = asyncContext;
 
-        if (result.Type == CompletionType.Normal)
+        // Enqueue the async body execution to the event loop to ensure it runs asynchronously
+        context.Engine.AddToEventLoop(() =>
         {
-            promiseCapability.Resolve.Call(JsValue.Undefined, JsValue.Undefined);
-        }
-        else if (result.Type == CompletionType.Return)
-        {
-            promiseCapability.Resolve.Call(JsValue.Undefined, result.Value);
-        }
-        else
-        {
-            promiseCapability.Reject.Call(JsValue.Undefined, result.Value);
-        }
+            // Push asyncContext onto the execution context stack; asyncContext is now the running execution context.
+            context.Engine.EnterExecutionContext(capturedAsyncContext);
+
+            try
+            {
+                Completion result;
+                try
+                {
+                    result = asyncBody(context);
+                }
+                catch (JavaScriptException e)
+                {
+                    promiseCapability.Reject.Call(JsValue.Undefined, e.Error);
+                    return;
+                }
+
+                if (result.Type == CompletionType.Normal)
+                {
+                    promiseCapability.Resolve.Call(JsValue.Undefined, JsValue.Undefined);
+                }
+                else if (result.Type == CompletionType.Return)
+                {
+                    promiseCapability.Resolve.Call(JsValue.Undefined, result.Value);
+                }
+                else
+                {
+                    promiseCapability.Reject.Call(JsValue.Undefined, result.Value);
+                }
+            }
+            finally
+            {
+                // Pop asyncContext from the execution context stack
+                context.Engine.LeaveExecutionContext();
+            }
+        });
 
         /*
         4. Push asyncContext onto the execution context stack; asyncContext is now the running execution context.
